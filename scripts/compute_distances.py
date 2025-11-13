@@ -5,12 +5,16 @@ routes to a predefined list of communes around Arc-et-Senans, France. The
 results are exported to both Excel and CSV files in the current working
 directory.
 
-Usage:
-    python scripts/compute_distances.py --api-key <ORS_API_KEY>
+Quick start:
+1. Installez les dépendances : ``pip install openrouteservice pandas``.
+2. Renseignez votre clé dans l'une des options suivantes :
+   - ``python scripts/compute_distances.py --api-key VOTRE_CLE``
+   - ``export ORS_API_KEY=VOTRE_CLE`` puis exécutez le script
+   - placez la clé dans un fichier texte (ou ``.env`` contenant ``ORS_API_KEY=VOTRE_CLE``)
+     et utilisez ``--api-key-file chemin/vers/fichier``
 
-The API key can also be provided through the environment variable
-``ORS_API_KEY``. If neither the flag nor the environment variable is set, the
-script will exit with an error message.
+Si aucune clé n'est trouvée via ces méthodes, le script affichera un message
+explicatif et s'arrêtera.
 
 The script rate-limits requests to avoid exceeding the OpenRouteService usage
 limits. Depending on the response times of the external service, the full run
@@ -22,10 +26,11 @@ from __future__ import annotations
 import argparse
 import os
 import time
-from typing import Iterable, List, Tuple
+from pathlib import Path
+from typing import Iterable, List, Tuple, TYPE_CHECKING
 
-import openrouteservice
-import pandas as pd
+if TYPE_CHECKING:  # pragma: no cover - uniquement pour l'analyse statique
+    import openrouteservice
 
 # Arc-et-Senans coordinates (lat, lon)
 ARC_LAT = 47.03305410997385
@@ -126,6 +131,12 @@ def parse_args() -> argparse.Namespace:
         help="OpenRouteService API key. Overrides the ORS_API_KEY environment variable.",
     )
     parser.add_argument(
+        "--api-key-file",
+        dest="api_key_file",
+        default=None,
+        help="Path to a text file (or .env file) that contains an ORS_API_KEY entry.",
+    )
+    parser.add_argument(
         "--sleep",
         dest="sleep",
         type=float,
@@ -141,21 +152,86 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_api_key(cli_key: str | None) -> str:
-    api_key = cli_key or os.getenv("ORS_API_KEY")
-    if not api_key:
-        raise SystemExit(
-            "An OpenRouteService API key is required. Provide it via --api-key or the ORS_API_KEY environment variable."
-        )
-    return api_key
+def resolve_api_key(cli_key: str | None, api_key_file: str | None) -> str:
+    """Resolve the OpenRouteService API key from multiple locations."""
+
+    if cli_key:
+        return cli_key.strip()
+
+    if api_key_file:
+        api_key = read_api_key_from_file(Path(api_key_file))
+        if api_key:
+            return api_key
+
+    env_key = os.getenv("ORS_API_KEY")
+    if env_key:
+        return env_key.strip()
+
+    dotenv_key = read_api_key_from_dotenv(Path(".env"))
+    if dotenv_key:
+        return dotenv_key
+
+    raise SystemExit(
+        "An OpenRouteService API key is required. Provide it via --api-key, --api-key-file, "
+        "the ORS_API_KEY environment variable, or by adding ORS_API_KEY=<votre_cle> to a local .env file."
+    )
 
 
-def init_client(api_key: str) -> openrouteservice.Client:
+def read_api_key_from_file(path: Path) -> str | None:
+    """Return the API key stored in *path* if it exists and is readable."""
+
+    try:
+        contents = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        print(f"  → Fichier de clé API introuvable : {path}")
+        return None
+    except OSError as exc:
+        raise SystemExit(f"Impossible de lire le fichier de clé API '{path}': {exc}") from exc
+
+    if not contents:
+        print(f"  → Le fichier de clé API '{path}' est vide.")
+        return None
+    if "=" not in contents:
+        return contents
+
+    # Autorise un fichier .env minimal contenant ORS_API_KEY=<valeur>
+    for line in contents.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "ORS_API_KEY":
+            return value.strip().strip('"').strip("'")
+    return None
+
+
+def read_api_key_from_dotenv(path: Path) -> str | None:
+    """Extract ORS_API_KEY from a local .env file, if present."""
+
+    if not path.exists():
+        return None
+
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() == "ORS_API_KEY":
+                return value.strip().strip('"').strip("'")
+    except OSError as exc:
+        raise SystemExit(f"Impossible de lire le fichier .env '{path}': {exc}") from exc
+    return None
+
+
+def init_client(api_key: str) -> "openrouteservice.Client":
+    import openrouteservice
+
     return openrouteservice.Client(key=api_key)
 
 
 def geocode_commune(
-    client: openrouteservice.Client, commune: Tuple[str, str]
+    client: "openrouteservice.Client", commune: Tuple[str, str]
 ) -> Tuple[str, str, float | None, float | None]:
     postal_code, name = commune
     query = f"{name}, {postal_code}, France"
@@ -167,7 +243,7 @@ def geocode_commune(
 
 
 def compute_route(
-    client: openrouteservice.Client, lat: float, lon: float
+    client: "openrouteservice.Client", lat: float, lon: float
 ) -> Tuple[float, float]:
     route = client.directions(
         coordinates=[[ARC_LON, ARC_LAT], [lon, lat]],
@@ -206,6 +282,8 @@ def collect_distances(
 
 
 def export_results(data: List[dict], output_prefix: str) -> None:
+    import pandas as pd
+
     df = pd.DataFrame(data)
     csv_path = f"{output_prefix}.csv"
     xlsx_path = f"{output_prefix}.xlsx"
@@ -216,7 +294,7 @@ def export_results(data: List[dict], output_prefix: str) -> None:
 
 def main() -> None:
     args = parse_args()
-    api_key = resolve_api_key(args.api_key)
+    api_key = resolve_api_key(args.api_key, args.api_key_file)
     client = init_client(api_key)
     results = collect_distances(client, COMMUNES, args.sleep)
     if not results:
