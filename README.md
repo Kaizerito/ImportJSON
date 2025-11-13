@@ -39,3 +39,56 @@ Some of this if possible internally with Google App Scripts External APIs, like 
 
 These require a Google account and an explicit permission, but in some cases may be a good fit.
 
+## Script de recherche de communes par temps de trajet
+
+Le dépôt contient également `scripts/compute_distances.py`, un utilitaire Python qui géocode
+une adresse de départ et une liste de communes (Doubs / Jura), calcule les temps de trajet
+via l'API OpenRouteService, puis retourne celles qui sont atteignables sous un budget de
+temps donné.
+
+### Pré-requis
+
+1. **Python 3.9+** installé sur votre machine.
+2. Créez (optionnel mais recommandé) un environnement virtuel :
+
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # sous Windows : .venv\Scripts\activate
+   ```
+
+3. Installez les dépendances nécessaires :
+
+   ```bash
+   pip install openrouteservice pandas
+   ```
+
+4. Récupérez une clé API personnelle sur <https://openrouteservice.org/sign-up/>.
+
+### Fournir la clé API
+
+Choisissez l'une des méthodes suivantes :
+
+* Via l'argument CLI : `python scripts/compute_distances.py --api-key VOTRE_CLE`
+* Via une variable d'environnement :
+
+  ```bash
+  export ORS_API_KEY="VOTRE_CLE"  # Windows PowerShell : $env:ORS_API_KEY="VOTRE_CLE"
+  ```
+
+* Via un fichier texte ou `.env` contenant une ligne `ORS_API_KEY=VOTRE_CLE`, puis
+  exécutez `python scripts/compute_distances.py --api-key-file chemin/vers/.env`
+
+### Lancement du script
+
+Ensuite, lancez en précisant l'adresse de départ et le temps maximum souhaité (en minutes) :
+
+```bash
+python scripts/compute_distances.py --address "Arc-et-Senans, France" --max-duration 20
+```
+
+Le script affiche dans le terminal la liste des communes atteignables en voiture dans la
+fenêtre de temps définie, triées par durée croissante. Ajoutez `--output-prefix resultat`
+pour générer un CSV/Excel (par exemple `resultat.csv` et `resultat.xlsx`) et
+`--include-out-of-range` pour inclure également les communes hors budget de temps dans
+l'export.
+
