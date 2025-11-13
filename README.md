@@ -39,11 +39,12 @@ Some of this if possible internally with Google App Scripts External APIs, like 
 
 These require a Google account and an explicit permission, but in some cases may be a good fit.
 
-## Script de calcul des distances Arc-et-Senans
+## Script de recherche de communes par temps de trajet
 
 Le dépôt contient également `scripts/compute_distances.py`, un utilitaire Python qui géocode
-une liste de communes autour d'Arc-et-Senans puis calcule les distances/temps de trajet via
-l'API OpenRouteService.
+une adresse de départ et une liste de communes (Doubs / Jura), calcule les temps de trajet
+via l'API OpenRouteService, puis retourne celles qui sont atteignables sous un budget de
+temps donné.
 
 ### Pré-requis
 
@@ -79,12 +80,15 @@ Choisissez l'une des méthodes suivantes :
 
 ### Lancement du script
 
-Ensuite, lancez simplement :
+Ensuite, lancez en précisant l'adresse de départ et le temps maximum souhaité (en minutes) :
 
 ```bash
-python scripts/compute_distances.py
+python scripts/compute_distances.py --address "Arc-et-Senans, France" --max-duration 20
 ```
 
-Le script affichera l'avancement pour chaque commune, puis générera deux fichiers dans le
-répertoire courant : `distances_arc_et_senans.csv` et `distances_arc_et_senans.xlsx`.
+Le script affiche dans le terminal la liste des communes atteignables en voiture dans la
+fenêtre de temps définie, triées par durée croissante. Ajoutez `--output-prefix resultat`
+pour générer un CSV/Excel (par exemple `resultat.csv` et `resultat.xlsx`) et
+`--include-out-of-range` pour inclure également les communes hors budget de temps dans
+l'export.
 

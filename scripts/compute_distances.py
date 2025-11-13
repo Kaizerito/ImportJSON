@@ -1,24 +1,27 @@
-"""Compute driving distances from Arc-et-Senans to a list of communes.
+"""Find communes reachable within a travel-time budget from a given address.
 
-This script uses the OpenRouteService directions API to geocode and compute
-routes to a predefined list of communes around Arc-et-Senans, France. The
-results are exported to both Excel and CSV files in the current working
-directory.
+This command-line tool relies on the OpenRouteService (ORS) APIs to:
+
+1. Géocoder une adresse de départ (ex. « Arc-et-Senans, France »).
+2. Géocoder une liste pré-définie de communes dans le Doubs / Jura.
+3. Calculer les itinéraires routiers voiture entre l'adresse et chaque commune.
+4. Filtrer les communes dont le temps de trajet est inférieur ou égal au budget
+   fourni (en minutes).
+
+Les résultats peuvent être affichés dans le terminal et, si désiré, exportés
+au format CSV / Excel.
 
 Quick start:
 1. Installez les dépendances : ``pip install openrouteservice pandas``.
-2. Renseignez votre clé dans l'une des options suivantes :
-   - ``python scripts/compute_distances.py --api-key VOTRE_CLE``
-   - ``export ORS_API_KEY=VOTRE_CLE`` puis exécutez le script
-   - placez la clé dans un fichier texte (ou ``.env`` contenant ``ORS_API_KEY=VOTRE_CLE``)
-     et utilisez ``--api-key-file chemin/vers/fichier``
+2. Fournissez la clé ORS via ``--api-key``, ``--api-key-file``, la variable
+   ``ORS_API_KEY`` ou un fichier ``.env`` (voir ``--help``).
+3. Lancez :
+   ``python scripts/compute_distances.py --address "Arc-et-Senans" --max-duration 20``
+   (remplacez l'adresse / le temps par vos valeurs).
 
-Si aucune clé n'est trouvée via ces méthodes, le script affichera un message
-explicatif et s'arrêtera.
-
-The script rate-limits requests to avoid exceeding the OpenRouteService usage
-limits. Depending on the response times of the external service, the full run
-can take several minutes.
+Le script temporise les appels API pour éviter de dépasser les limites
+d'utilisation d'OpenRouteService. La durée totale dépendra du temps de réponse
+des services externes.
 """
 
 from __future__ import annotations
@@ -26,16 +29,13 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Iterable, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - uniquement pour l'analyse statique
     import openrouteservice
-
-# Arc-et-Senans coordinates (lat, lon)
-ARC_LAT = 47.03305410997385
-ARC_LON = 5.777678186344349
 
 # (Postal code, Commune name)
 COMMUNES: List[Tuple[str, str]] = [
@@ -138,6 +138,19 @@ def parse_args() -> argparse.Namespace:
         help="Path to a text file (or .env file) that contains an ORS_API_KEY entry.",
     )
     parser.add_argument(
+        "--address",
+        dest="address",
+        required=True,
+        help="Adresse de départ (ex: 'Arc-et-Senans, France').",
+    )
+    parser.add_argument(
+        "--max-duration",
+        dest="max_duration",
+        type=float,
+        required=True,
+        help="Temps de trajet maximum en minutes.",
+    )
+    parser.add_argument(
         "--sleep",
         dest="sleep",
         type=float,
@@ -147,8 +160,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-prefix",
         dest="output_prefix",
-        default="distances_arc_et_senans",
-        help="Base filename for the generated CSV and XLSX files.",
+        default=None,
+        help="Nom de base pour exporter les résultats (CSV + XLSX). Aucun export si omis.",
+    )
+    parser.add_argument(
+        "--include-out-of-range",
+        dest="include_out_of_range",
+        action="store_true",
+        help="Inclut les communes hors budget dans l'export/affichage.",
     )
     return parser.parse_args()
 
@@ -241,23 +260,33 @@ def init_client(api_key: str) -> "openrouteservice.Client":
     return openrouteservice.Client(key=api_key)
 
 
+def geocode(
+    client: "openrouteservice.Client", query: str
+) -> Tuple[float | None, float | None]:
+    response = client.pelias_search(text=query)
+    if response.get("features"):
+        coordinates = response["features"][0]["geometry"]["coordinates"]
+        return coordinates[1], coordinates[0]
+    return None, None
+
+
 def geocode_commune(
     client: "openrouteservice.Client", commune: Tuple[str, str]
 ) -> Tuple[str, str, float | None, float | None]:
     postal_code, name = commune
-    query = f"{name}, {postal_code}, France"
-    response = client.pelias_search(text=query)
-    if response.get("features"):
-        coordinates = response["features"][0]["geometry"]["coordinates"]
-        return postal_code, name, coordinates[1], coordinates[0]
-    return postal_code, name, None, None
+    lat, lon = geocode(client, f"{name}, {postal_code}, France")
+    return postal_code, name, lat, lon
 
 
 def compute_route(
-    client: "openrouteservice.Client", lat: float, lon: float
+    client: "openrouteservice.Client",
+    start_lat: float,
+    start_lon: float,
+    lat: float,
+    lon: float,
 ) -> Tuple[float, float]:
     route = client.directions(
-        coordinates=[[ARC_LON, ARC_LAT], [lon, lat]],
+        coordinates=[[start_lon, start_lat], [lon, lat]],
         profile="driving-car",
         format="json",
     )
@@ -268,7 +297,9 @@ def compute_route(
 
 
 def collect_distances(
-    client: openrouteservice.Client,
+    client: "openrouteservice.Client",
+    start_lat: float,
+    start_lon: float,
     communes: Iterable[Tuple[str, str]],
     sleep_seconds: float,
 ) -> List[dict]:
@@ -279,12 +310,12 @@ def collect_distances(
         if lat is None or lon is None:
             print("  → Impossible de trouver la localisation, IGNORÉ")
             continue
-        distance_km, duration_min = compute_route(client, lat, lon)
+        distance_km, duration_min = compute_route(client, start_lat, start_lon, lat, lon)
         results.append(
             {
                 "Code postal": postal_code,
                 "Commune": name,
-                "Distance Arc-et-Senans (km)": round(distance_km, 2),
+                "Distance (km)": round(distance_km, 2),
                 "Temps voiture (min)": round(duration_min, 1),
             }
         )
@@ -304,15 +335,72 @@ def export_results(data: List[dict], output_prefix: str) -> None:
     print(f"Fichiers générés : {xlsx_path} + {csv_path}")
 
 
+def print_results_table(results: List[dict]) -> None:
+    if not results:
+        print("Aucune commune ne correspond au budget de temps indiqué.")
+        return
+
+    headers = ["Code postal", "Commune", "Temps voiture (min)", "Distance (km)"]
+    col_widths = {header: len(header) for header in headers}
+    for row in results:
+        for header in headers:
+            col_widths[header] = max(col_widths[header], len(str(row.get(header, ""))))
+
+    def format_row(row: dict | None) -> str:
+        if row is None:
+            return " | ".join(header.ljust(col_widths[header]) for header in headers)
+        return " | ".join(str(row.get(header, "")).ljust(col_widths[header]) for header in headers)
+
+    separator = "-+-".join("-" * col_widths[header] for header in headers)
+    print(format_row(None))
+    print(separator)
+    for row in results:
+        print(format_row(row))
+
+
 def main() -> None:
     args = parse_args()
     api_key = resolve_api_key(args.api_key, args.api_key_file)
     client = init_client(api_key)
-    results = collect_distances(client, COMMUNES, args.sleep)
-    if not results:
+    start_lat, start_lon = geocode(client, args.address)
+    if start_lat is None or start_lon is None:
+        raise SystemExit(
+            "Adresse de départ introuvable via ORS. Vérifiez l'orthographe ou précisez davantage."
+        )
+
+    all_results = collect_distances(client, start_lat, start_lon, COMMUNES, args.sleep)
+    if not all_results:
         print("Aucun résultat calculé.")
         return
-    export_results(results, args.output_prefix)
+
+    all_results.sort(key=lambda item: item["Temps voiture (min)"])
+    in_range = [
+        row for row in all_results if row["Temps voiture (min)"] <= round(args.max_duration, 10)
+    ]
+
+    print()
+    print(
+        f"Communes atteignables en ≤ {args.max_duration} min depuis '{args.address}':"
+    )
+    print_results_table(in_range)
+
+    if args.include_out_of_range:
+        print()
+        print("Communes hors budget de temps :")
+        out_of_range = [row for row in all_results if row not in in_range]
+        print_results_table(out_of_range)
+
+    if args.output_prefix:
+        try:
+            export_results(
+                all_results if args.include_out_of_range else in_range,
+                args.output_prefix,
+            )
+        except SystemExit:
+            raise
+        except Exception as exc:  # pragma: no cover - affichage utilisateur
+            print(f"Erreur lors de l'export : {exc}", file=sys.stderr)
+            raise
 
 
 if __name__ == "__main__":
