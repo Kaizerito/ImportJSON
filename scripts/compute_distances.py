@@ -24,6 +24,7 @@ can take several minutes.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import time
 from pathlib import Path
@@ -224,7 +225,17 @@ def read_api_key_from_dotenv(path: Path) -> str | None:
     return None
 
 
+def ensure_dependency(module_name: str, install_hint: str) -> None:
+    """Exit with a friendly hint if *module_name* is not importable."""
+
+    if importlib.util.find_spec(module_name) is None:
+        raise SystemExit(
+            f"Le module Python '{module_name}' est requis. Installez-le avec : {install_hint}"
+        )
+
+
 def init_client(api_key: str) -> "openrouteservice.Client":
+    ensure_dependency("openrouteservice", "pip install openrouteservice")
     import openrouteservice
 
     return openrouteservice.Client(key=api_key)
@@ -282,6 +293,7 @@ def collect_distances(
 
 
 def export_results(data: List[dict], output_prefix: str) -> None:
+    ensure_dependency("pandas", "pip install pandas")
     import pandas as pd
 
     df = pd.DataFrame(data)

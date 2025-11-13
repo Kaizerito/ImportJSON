@@ -39,3 +39,52 @@ Some of this if possible internally with Google App Scripts External APIs, like 
 
 These require a Google account and an explicit permission, but in some cases may be a good fit.
 
+## Script de calcul des distances Arc-et-Senans
+
+Le dépôt contient également `scripts/compute_distances.py`, un utilitaire Python qui géocode
+une liste de communes autour d'Arc-et-Senans puis calcule les distances/temps de trajet via
+l'API OpenRouteService.
+
+### Pré-requis
+
+1. **Python 3.9+** installé sur votre machine.
+2. Créez (optionnel mais recommandé) un environnement virtuel :
+
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # sous Windows : .venv\Scripts\activate
+   ```
+
+3. Installez les dépendances nécessaires :
+
+   ```bash
+   pip install openrouteservice pandas
+   ```
+
+4. Récupérez une clé API personnelle sur <https://openrouteservice.org/sign-up/>.
+
+### Fournir la clé API
+
+Choisissez l'une des méthodes suivantes :
+
+* Via l'argument CLI : `python scripts/compute_distances.py --api-key VOTRE_CLE`
+* Via une variable d'environnement :
+
+  ```bash
+  export ORS_API_KEY="VOTRE_CLE"  # Windows PowerShell : $env:ORS_API_KEY="VOTRE_CLE"
+  ```
+
+* Via un fichier texte ou `.env` contenant une ligne `ORS_API_KEY=VOTRE_CLE`, puis
+  exécutez `python scripts/compute_distances.py --api-key-file chemin/vers/.env`
+
+### Lancement du script
+
+Ensuite, lancez simplement :
+
+```bash
+python scripts/compute_distances.py
+```
+
+Le script affichera l'avancement pour chaque commune, puis générera deux fichiers dans le
+répertoire courant : `distances_arc_et_senans.csv` et `distances_arc_et_senans.xlsx`.
+
